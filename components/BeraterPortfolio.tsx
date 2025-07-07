@@ -98,20 +98,58 @@ export default function BeraterPortfolio() {
         console.log('📋 Alle Kategorien:', allCategories.map(cat => `"${cat.name}" (${cat.slug}, ${cat.count} Posts)`));
         
         // Finde alle Berater-relevanten Kategorien
-        const beraterCategories = allCategories.filter(cat => 
-          cat.name.toLowerCase().includes('berater') ||
-          cat.slug.includes('berater') ||
-          cat.name.toLowerCase().includes('führung') ||
-          cat.name.toLowerCase().includes('transformation') ||
-          cat.name.toLowerCase().includes('team') ||
-          cat.name.toLowerCase().includes('consultant')
-        );
+        const beraterCategories = allCategories.filter(cat => {
+          const nameMatch = cat.name.toLowerCase().includes('berater') ||
+                           cat.name.toLowerCase().includes('führung') ||
+                           cat.name.toLowerCase().includes('transformation') ||
+                           cat.name.toLowerCase().includes('team') ||
+                           cat.name.toLowerCase().includes('consultant');
+          
+          const slugMatch = cat.slug === 'berater' ||
+                           cat.slug.includes('berater') ||
+                           cat.slug === 'consultant' ||
+                           cat.slug === 'team' ||
+                           cat.slug === 'fuehrung' ||
+                           cat.slug === 'leadership';
+          
+          return nameMatch || slugMatch;
+        });
         
         console.log('🎯 Berater-relevante Kategorien gefunden:', beraterCategories);
         setFoundCategories(beraterCategories);
         setDebugInfo(`${beraterCategories.length} Berater-Kategorien gefunden: ${beraterCategories.map(c => c.name).join(', ')}`);
         
         if (beraterCategories.length === 0) {
+          // Erweiterte Suche nach "berater" Slug
+          console.log('🔍 Erweiterte Suche nach "berater" Slug...');
+          const beraterSlugCategory = allCategories.find(cat => cat.slug === 'berater');
+          
+          if (beraterSlugCategory) {
+            console.log('✅ "berater" Slug-Kategorie gefunden:', beraterSlugCategory);
+            setFoundCategories([beraterSlugCategory]);
+            setDebugInfo(`Berater-Kategorie gefunden: "${beraterSlugCategory.name}" (${beraterSlugCategory.count} Posts)`);
+            
+            // Lade Posts aus der berater-Kategorie
+            const beraterResponse = await fetch(`https://cockpit4me.de/wp-json/wp/v2/posts?_embed&per_page=50&categories=${beraterSlugCategory.id}&orderby=date&order=desc`, {
+              headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+              },
+              mode: 'cors',
+              cache: 'no-cache'
+            });
+            
+            if (beraterResponse.ok) {
+              const beraterPosts = await beraterResponse.json();
+              if (beraterPosts.length > 0) {
+                setBeraterTeam(beraterPosts);
+                setDebugInfo(prev => prev + ` | ${beraterPosts.length} Berater-Posts geladen`);
+                setError(null);
+                return;
+              }
+            }
+          }
+          
           throw new Error('Keine Berater-Kategorien gefunden');
         }
         
