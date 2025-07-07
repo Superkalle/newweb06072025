@@ -590,19 +590,19 @@ export default function Portfolio() {
                     </div>
                   )}
 
-                    <Link 
-                      href={`/portfolio/${item.slug || item.id}`}
+                    <Button 
+                      asChild
+                      variant="ghost"
+                      size="sm"
                       className="p-0 h-auto text-cockpit-turquoise hover:text-cockpit-teal font-semibold group/btn"
                     >
-                      <a 
-                        href={item.link} 
-                        target="_blank"
-                        rel="noopener noreferrer"
+                      <Link 
+                        href={`/portfolio/${item.slug || item.id}`}
                         className="flex items-center space-x-2"
                       >
                         <span>Details</span>
                         <ArrowRight className="w-4 h-4 group-hover/btn:translate-x-1 transition-transform" />
-                      </a>
+                      </Link>
                     </Button>
 
                     {/* Project URL */}
