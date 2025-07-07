@@ -428,7 +428,7 @@ export default function Portfolio() {
                       : "border-cockpit-turquoise text-cockpit-turquoise hover:bg-cockpit-turquoise hover:text-white"
                     }
                   >
-                    {category === 'all' ? 'Alle Projekte' : category}
+                    </Link>
                   </Button>
                 ))}
               </div>
@@ -590,10 +590,8 @@ export default function Portfolio() {
                     </div>
                   )}
 
-                  <div className="flex items-center justify-between">
-                    <Button 
-                      asChild
-                      variant="ghost" 
+                    <Link 
+                      href={`/portfolio/${item.slug || item.id}`}
                       className="p-0 h-auto text-cockpit-turquoise hover:text-cockpit-teal font-semibold group/btn"
                     >
                       <a 
