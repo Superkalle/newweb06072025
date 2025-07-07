@@ -147,68 +147,136 @@ export default function BeraterPortfolio() {
           const allCategories: Category[] = await categoriesResponse.json();
           console.log('📋 Alle Kategorien:', allCategories.map(cat => `"${cat.name}" (${cat.slug}, ${cat.count} Posts)`));
           
-          // Finde Berater-relevante Kategorien
+          // Finde alle Berater-relevanten Kategorien
           const beraterCategories = allCategories.filter(cat => {
             const nameMatch = cat.name.toLowerCase().includes('berater') ||
+                             cat.name.toLowerCase().includes('führung') ||
+                             cat.name.toLowerCase().includes('transformation') ||
                              cat.name.toLowerCase().includes('team') ||
                              cat.name.toLowerCase().includes('consultant');
             
             const slugMatch = cat.slug === 'berater' ||
                              cat.slug.includes('berater') ||
+                             cat.slug === 'consultant' ||
                              cat.slug === 'team' ||
-                             cat.slug === 'consultant';
+                             cat.slug === 'fuehrung' ||
+                             cat.slug === 'leadership';
             
             return nameMatch || slugMatch;
           });
           
           console.log('🎯 Berater-relevante Kategorien gefunden:', beraterCategories);
           setFoundCategories(beraterCategories);
+          setDebugInfo(`${beraterCategories.length} Berater-Kategorien gefunden: ${beraterCategories.map(c => c.name).join(', ')}`);
           
-          if (beraterCategories.length > 0) {
-            // Lade Posts aus Berater-Kategorien
-            for (const category of beraterCategories) {
-              try {
-                console.log(`📦 Lade Posts aus Kategorie "${category.name}" (ID: ${category.id})...`);
-                
-                const postsResponse = await fetch(`https://cockpit4me.de/wp-json/wp/v2/posts?_embed&per_page=50&categories=${category.id}&orderby=date&order=desc`, {
-                  headers: {
-                    'Accept': 'application/json',
-                    'Content-Type': 'application/json',
-                  },
-                  mode: 'cors',
-                  cache: 'no-cache'
-                });
-
-                if (postsResponse.ok) {
-                  const posts = await postsResponse.json();
-                  console.log(`✅ ${posts.length} Posts aus "${category.name}" geladen`);
-                  
-                  if (Array.isArray(posts) && posts.length > 0) {
-                    // Filtere Posts nach Berater-Namen
-                    const beraterFilteredPosts = posts.filter((post: WordPressBerater) => {
-                      const title = post.title.rendered.toLowerCase();
-                      const content = post.content.rendered.toLowerCase();
-                      const excerpt = post.excerpt.rendered.toLowerCase();
-                      
-                      return beraterNames.some(name => {
-                        const nameParts = name.split(' ');
-                        return nameParts.every(part => 
-                          title.includes(part) || 
-                          content.includes(part) || 
-                          excerpt.includes(part)
-                        );
-                      });
-                    });
-                    
-                    if (beraterFilteredPosts.length > 0) {
-                      allBeraterPosts = [...allBeraterPosts, ...beraterFilteredPosts];
-                    }
-                  }
+          if (beraterCategories.length === 0) {
+            // Erweiterte Suche nach "berater" Slug
+            console.log('🔍 Erweiterte Suche nach "berater" Slug...');
+            const beraterSlugCategory = allCategories.find(cat => cat.slug === 'berater');
+            
+            if (beraterSlugCategory) {
+              console.log('✅ "berater" Slug-Kategorie gefunden:', beraterSlugCategory);
+              setFoundCategories([beraterSlugCategory]);
+              setDebugInfo(`Berater-Kategorie gefunden: "${beraterSlugCategory.name}" (${beraterSlugCategory.count} Posts)`);
+              
+              // Lade Posts aus der berater-Kategorie
+              const beraterResponse = await fetch(`https://cockpit4me.de/wp-json/wp/v2/posts?_embed&per_page=50&categories=${beraterSlugCategory.id}&orderby=date&order=desc`, {
+                headers: {
+                  'Accept': 'application/json',
+                  'Content-Type': 'application/json',
+                },
+                mode: 'cors',
+                cache: 'no-cache'
+              });
+              
+              if (beraterResponse.ok) {
+                const beraterPosts = await beraterResponse.json();
+                if (beraterPosts.length > 0) {
+                  setBeraterTeam(beraterPosts);
+                  setDebugInfo(prev => prev + ` | ${beraterPosts.length} Berater-Posts geladen`);
+                  setError(null);
+                  return;
                 }
-              } catch (categoryError) {
-                console.log(`❌ Fehler bei Kategorie "${category.name}":`, categoryError);
-                continue;
               }
+            }
+            
+            throw new Error('Keine Berater-Kategorien gefunden');
+          }
+          
+          // Schritt 2: Posts aus allen Berater-Kategorien laden
+          let allBeraterPosts: WordPressBerater[] = [];
+          
+          for (const category of beraterCategories) {
+            try {
+              console.log(`📦 Lade Posts aus Kategorie "${category.name}" (ID: ${category.id})...`);
+              
+              const postsResponse = await fetch(`https://cockpit4me.de/wp-json/wp/v2/posts?_embed&per_page=50&categories=${category.id}&orderby=date&order=desc`, {
+                headers: {
+                  'Accept': 'application/json',
+                  'Content-Type': 'application/json',
+                },
+                mode: 'cors',
+                cache: 'no-cache'
+              });
+
+              if (postsResponse.ok) {
+                const posts = await postsResponse.json();
+                console.log(`✅ ${posts.length} Posts aus "${category.name}" geladen`);
+                
+                if (Array.isArray(posts) && posts.length > 0) {
+                  // Füge Kategorie-Info zu jedem Post hinzu
+                  const postsWithCategory = posts.map((post: WordPressBerater) => ({
+                    ...post,
+                    sourceCategory: category.name
+                  }));
+                  allBeraterPosts = [...allBeraterPosts, ...postsWithCategory];
+                }
+              } else {
+                console.log(`⚠️ Kategorie "${category.name}" konnte nicht geladen werden: ${postsResponse.status}`);
+              }
+            } catch (categoryError) {
+              console.log(`❌ Fehler bei Kategorie "${category.name}":`, categoryError);
+              continue;
+            }
+          }
+          
+          // Entferne Duplikate basierend auf Post-ID
+          const uniquePosts = allBeraterPosts.filter((post, index, self) => 
+            index === self.findIndex(p => p.id === post.id)
+          );
+          
+          console.log(`🎉 Insgesamt ${uniquePosts.length} einzigartige Berater-Posts gefunden`);
+          setDebugInfo(prev => prev + ` | ${uniquePosts.length} Posts geladen`);
+          
+          if (uniquePosts.length > 0) {
+            setBeraterTeam(uniquePosts);
+            setError(null);
+          } else {
+            // Fallback: Suche nach Posts mit "berater" im Titel oder Inhalt
+            console.log('🔄 Fallback: Suche nach Posts mit "berater" im Inhalt...');
+            
+            const fallbackResponse = await fetch('https://cockpit4me.de/wp-json/wp/v2/posts?_embed&per_page=50&search=berater&orderby=relevance&order=desc', {
+              headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+              },
+              mode: 'cors',
+              cache: 'no-cache'
+            });
+            
+            if (fallbackResponse.ok) {
+              const fallbackPosts = await fallbackResponse.json();
+              console.log(`📦 ${fallbackPosts.length} Posts über Fallback-Suche gefunden`);
+              
+              if (fallbackPosts.length > 0) {
+                setBeraterTeam(fallbackPosts);
+                setDebugInfo(prev => prev + ` | Fallback: ${fallbackPosts.length} Posts`);
+                setError(null);
+              } else {
+                throw new Error('Keine Berater-Posts gefunden (auch nicht über Fallback-Suche)');
+              }
+            } else {
+              throw new Error('Keine Berater-Posts in den gefundenen Kategorien');
             }
           }
         }
@@ -251,167 +319,6 @@ export default function BeraterPortfolio() {
           setError(null);
         } else {
           throw new Error('Keine Posts für die spezifischen Berater gefunden (Marcus Kaliga, Jörg Wachsmuth, Manuel Jork, Stefan Wolf)');
-        }
-
-      } catch (err) {
-        console.error('❌ Berater-Team-Laden fehlgeschlagen:', err);
-        setError(err instanceof Error ? err.message : 'Fehler beim Laden der Berater-Team-Daten');
-        setBeraterTeam([]);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchBeraterTeam();
-  }, []);
-
-  const getCategories = (item: WordPressBerater) => {
-          headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json',
-          },
-          mode: 'cors',
-          cache: 'no-cache'
-        });
-        
-        if (!categoriesResponse.ok) {
-          throw new Error(`Kategorien-Abruf fehlgeschlagen: ${categoriesResponse.status}`);
-        }
-        
-        const allCategories: Category[] = await categoriesResponse.json();
-        console.log('📋 Alle Kategorien:', allCategories.map(cat => `"${cat.name}" (${cat.slug}, ${cat.count} Posts)`));
-        
-        // Finde alle Berater-relevanten Kategorien
-        const beraterCategories = allCategories.filter(cat => {
-          const nameMatch = cat.name.toLowerCase().includes('berater') ||
-                           cat.name.toLowerCase().includes('führung') ||
-                           cat.name.toLowerCase().includes('transformation') ||
-                           cat.name.toLowerCase().includes('team') ||
-                           cat.name.toLowerCase().includes('consultant');
-          
-          const slugMatch = cat.slug === 'berater' ||
-                           cat.slug.includes('berater') ||
-                           cat.slug === 'consultant' ||
-                           cat.slug === 'team' ||
-                           cat.slug === 'fuehrung' ||
-                           cat.slug === 'leadership';
-          
-          return nameMatch || slugMatch;
-        });
-        
-        console.log('🎯 Berater-relevante Kategorien gefunden:', beraterCategories);
-        setFoundCategories(beraterCategories);
-        setDebugInfo(`${beraterCategories.length} Berater-Kategorien gefunden: ${beraterCategories.map(c => c.name).join(', ')}`);
-        
-        if (beraterCategories.length === 0) {
-          // Erweiterte Suche nach "berater" Slug
-          console.log('🔍 Erweiterte Suche nach "berater" Slug...');
-          const beraterSlugCategory = allCategories.find(cat => cat.slug === 'berater');
-          
-          if (beraterSlugCategory) {
-            console.log('✅ "berater" Slug-Kategorie gefunden:', beraterSlugCategory);
-            setFoundCategories([beraterSlugCategory]);
-            setDebugInfo(`Berater-Kategorie gefunden: "${beraterSlugCategory.name}" (${beraterSlugCategory.count} Posts)`);
-            
-            // Lade Posts aus der berater-Kategorie
-            const beraterResponse = await fetch(`https://cockpit4me.de/wp-json/wp/v2/posts?_embed&per_page=50&categories=${beraterSlugCategory.id}&orderby=date&order=desc`, {
-              headers: {
-                'Accept': 'application/json',
-                'Content-Type': 'application/json',
-              },
-              mode: 'cors',
-              cache: 'no-cache'
-            });
-            
-            if (beraterResponse.ok) {
-              const beraterPosts = await beraterResponse.json();
-              if (beraterPosts.length > 0) {
-                setBeraterTeam(beraterPosts);
-                setDebugInfo(prev => prev + ` | ${beraterPosts.length} Berater-Posts geladen`);
-                setError(null);
-                return;
-              }
-            }
-          }
-          
-          throw new Error('Keine Berater-Kategorien gefunden');
-        }
-        
-        // Schritt 2: Posts aus allen Berater-Kategorien laden
-        let allBeraterPosts: WordPressBerater[] = [];
-        
-        for (const category of beraterCategories) {
-          try {
-            console.log(`📦 Lade Posts aus Kategorie "${category.name}" (ID: ${category.id})...`);
-            
-            const postsResponse = await fetch(`https://cockpit4me.de/wp-json/wp/v2/posts?_embed&per_page=50&categories=${category.id}&orderby=date&order=desc`, {
-              headers: {
-                'Accept': 'application/json',
-                'Content-Type': 'application/json',
-              },
-              mode: 'cors',
-              cache: 'no-cache'
-            });
-
-            if (postsResponse.ok) {
-              const posts = await postsResponse.json();
-              console.log(`✅ ${posts.length} Posts aus "${category.name}" geladen`);
-              
-              if (Array.isArray(posts) && posts.length > 0) {
-                // Füge Kategorie-Info zu jedem Post hinzu
-                const postsWithCategory = posts.map((post: WordPressBerater) => ({
-                  ...post,
-                  sourceCategory: category.name
-                }));
-                allBeraterPosts = [...allBeraterPosts, ...postsWithCategory];
-              }
-            } else {
-              console.log(`⚠️ Kategorie "${category.name}" konnte nicht geladen werden: ${postsResponse.status}`);
-            }
-          } catch (categoryError) {
-            console.log(`❌ Fehler bei Kategorie "${category.name}":`, categoryError);
-            continue;
-          }
-        }
-        
-        // Entferne Duplikate basierend auf Post-ID
-        const uniquePosts = allBeraterPosts.filter((post, index, self) => 
-          index === self.findIndex(p => p.id === post.id)
-        );
-        
-        console.log(`🎉 Insgesamt ${uniquePosts.length} einzigartige Berater-Posts gefunden`);
-        setDebugInfo(prev => prev + ` | ${uniquePosts.length} Posts geladen`);
-        
-        if (uniquePosts.length > 0) {
-          setBeraterTeam(uniquePosts);
-          setError(null);
-        } else {
-          // Fallback: Suche nach Posts mit "berater" im Titel oder Inhalt
-          console.log('🔄 Fallback: Suche nach Posts mit "berater" im Inhalt...');
-          
-          const fallbackResponse = await fetch('https://cockpit4me.de/wp-json/wp/v2/posts?_embed&per_page=50&search=berater&orderby=relevance&order=desc', {
-            headers: {
-              'Accept': 'application/json',
-              'Content-Type': 'application/json',
-            },
-            mode: 'cors',
-            cache: 'no-cache'
-          });
-          
-          if (fallbackResponse.ok) {
-            const fallbackPosts = await fallbackResponse.json();
-            console.log(`📦 ${fallbackPosts.length} Posts über Fallback-Suche gefunden`);
-            
-            if (fallbackPosts.length > 0) {
-              setBeraterTeam(fallbackPosts);
-              setDebugInfo(prev => prev + ` | Fallback: ${fallbackPosts.length} Posts`);
-              setError(null);
-            } else {
-              throw new Error('Keine Berater-Posts gefunden (auch nicht über Fallback-Suche)');
-            }
-          } else {
-            throw new Error('Keine Berater-Posts in den gefundenen Kategorien');
-          }
         }
 
       } catch (err) {
@@ -606,11 +513,12 @@ export default function BeraterPortfolio() {
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-8 mb-8">
                 <div className="flex items-center space-x-3 mb-4">
                   <AlertCircle className="w-6 h-6 text-amber-600" />
-                  <h3 className="text-xl font-semibold text-amber-800">Berater-Profile werden eingerichtet</h3>
+                  <h3 className="text-xl font-semibold text-amber-800">Berater-Profile werden vorbereitet</h3>
                 </div>
                 <p className="text-amber-700 mb-4 leading-relaxed">
-                  Die Berater-Posts werden gerade in WordPress vorbereitet. 
-                  Besuchen Sie unsere Hauptwebsite für aktuelle Team-Informationen.
+                  Die Profile für Marcus Kaliga, Jörg Wachsmuth, Manuel Jork und Stefan Wolf 
+                  werden gerade in WordPress eingerichtet. Besuchen Sie unsere Hauptwebsite 
+                  für aktuelle Team-Informationen.
                 </p>
                 
                 {/* Debug Info */}
@@ -638,12 +546,12 @@ export default function BeraterPortfolio() {
                     className="bg-cockpit-gradient hover:opacity-90 text-white"
                   >
                     <a 
-                      href="https://cockpit4me.de/team" 
+                      href="https://cockpit4me.de/berater" 
                       target="_blank" 
                       rel="noopener noreferrer"
                       className="inline-flex items-center space-x-2"
                     >
-                      <span>Team kennenlernen</span>
+                      <span>Berater kennenlernen</span>
                       <ExternalLink className="w-4 h-4" />
                     </a>
                   </Button>
