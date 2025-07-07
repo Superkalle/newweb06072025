@@ -428,7 +428,7 @@ export default function Portfolio() {
                       : "border-cockpit-turquoise text-cockpit-turquoise hover:bg-cockpit-turquoise hover:text-white"
                     }
                   >
-                    </Link>
+                    {category === 'all' ? 'Alle' : category}
                   </Button>
                 ))}
               </div>
