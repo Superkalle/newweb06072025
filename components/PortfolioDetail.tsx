@@ -31,60 +31,7 @@ import {
   MessageCircle
 } from 'lucide-react';
 
-interface WordPressPortfolio {
-  id: number;
-  title: {
-    rendered: string;
-  };
-  excerpt: {
-    rendered: string;
-  };
-  content: {
-    rendered: string;
-  };
-  date: string;
-  link: string;
-  featured_media: number;
-  slug: string;
-  type?: string;
-  acf?: {
-    project_url?: string;
-    client_name?: string;
-    project_type?: string;
-    technologies?: string;
-    completion_date?: string;
-    project_description?: string;
-    project_status?: string;
-    project_budget?: string;
-    project_duration?: string;
-    project_team_size?: string;
-    project_challenges?: string;
-    project_solutions?: string;
-    project_results?: string;
-    client_testimonial?: string;
-    client_contact?: string;
-    project_gallery?: string;
-  };
-  _embedded?: {
-    'wp:featuredmedia'?: Array<{
-      source_url: string;
-      alt_text: string;
-      media_details?: {
-        sizes?: {
-          medium?: { source_url: string; };
-          large?: { source_url: string; };
-          full?: { source_url: string; };
-        };
-      };
-    }>;
-    'wp:term'?: Array<Array<{
-      id: number;
-      name: string;
-      taxonomy: string;
-      slug: string;
-    }>>;
-  };
-}
+import { WordPressPortfolio, fetchPortfolio, fetchCategories } from '@/lib/wordpress';
 
 interface PortfolioDetailProps {
   slug: string;
@@ -95,129 +42,75 @@ export default function PortfolioDetail({ slug }: PortfolioDetailProps) {
   const [relatedProjects, setRelatedProjects] = useState<WordPressPortfolio[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [allCategories, setAllCategories] = useState<Array<{ id: number; name: string; slug: string; taxonomy: string; }>>([]);
+  const [allTags, setAllTags] = useState<Array<{ id: number; name: string; slug: string; }>>([]);
   const router = useRouter();
 
   useEffect(() => {
-    const fetchPortfolioItem = async () => {
+    const loadData = async () => {
       setLoading(true);
-      
+      setError(null);
+
       try {
-        // Versuche verschiedene Endpoints um das Portfolio-Item zu finden
-        const endpoints = [
-          `https://cockpit4me.de/wp-json/wp/v2/portfolio?_embed&slug=${slug}`,
-          `https://cockpit4me.de/wp-json/wp/v2/posts?_embed&slug=${slug}`,
-          `https://cockpit4me.de/wp-json/wp/v2/posts?_embed&search=${slug}&per_page=1`
-        ];
+        // Fetch all categories and tags once
+        const categoriesData = await fetchCategories();
+        setAllCategories(categoriesData);
 
-        let foundItem: WordPressPortfolio | null = null;
+        const tagsData = await fetchTags();
+        setAllTags(tagsData);
 
-        for (const endpoint of endpoints) {
-          try {
-            const response = await fetch(endpoint, {
-              headers: {
-                'Accept': 'application/json',
-                'Content-Type': 'application/json',
-              },
-              mode: 'cors',
-              cache: 'no-cache'
-            });
-
-            if (response.ok) {
-              const data = await response.json();
-              if (Array.isArray(data) && data.length > 0) {
-                foundItem = data[0];
-                break;
-              }
-            }
-          } catch (endpointError) {
-            continue;
-          }
-        }
+        // Fetch the specific portfolio item by slug
+        const portfolioItems = await fetchPortfolio({ search: slug });
+        const foundItem = portfolioItems.find(item => item.slug === slug);
 
         if (foundItem) {
           setPortfolioItem(foundItem);
-          
-          // Lade ähnliche Projekte
-          await fetchRelatedProjects(foundItem);
+          // Load related projects based on the found item's categories
+          await fetchRelatedProjects(foundItem, categoriesData);
         } else {
           setError('Portfolio-Projekt nicht gefunden');
         }
 
       } catch (err) {
-        console.error('Fehler beim Laden des Portfolio-Items:', err);
+        console.error('Fehler beim Laden der Portfolio-Details:', err);
         setError(err instanceof Error ? err.message : 'Fehler beim Laden der Daten');
       } finally {
         setLoading(false);
       }
     };
 
-    const fetchRelatedProjects = async (currentItem: WordPressPortfolio) => {
+    const fetchRelatedProjects = async (currentItem: WordPressPortfolio, categoriesData: Array<{ id: number; name: string; slug: string; taxonomy: string; }>) => {
       try {
-        const categories = getCategories(currentItem);
-        const categoryIds = categories.map(cat => cat.id).join(',');
+        const categoryIds = currentItem.portfolio_categories.join(',');
         
         if (categoryIds) {
-          const response = await fetch(
-            `https://cockpit4me.de/wp-json/wp/v2/posts?_embed&categories=${categoryIds}&exclude=${currentItem.id}&per_page=3`,
-            {
-              headers: {
-                'Accept': 'application/json',
-                'Content-Type': 'application/json',
-              },
-              mode: 'cors',
-              cache: 'no-cache'
-            }
-          );
-
-          if (response.ok) {
-            const relatedData = await response.json();
-            setRelatedProjects(relatedData);
-          }
+          const related = await fetchPortfolio({
+            portfolio_category: categoryIds,
+            exclude: String(currentItem.id),
+            per_page: 3,
+          });
+          setRelatedProjects(related);
         }
       } catch (err) {
         console.log('Fehler beim Laden ähnlicher Projekte:', err);
       }
     };
 
-    fetchPortfolioItem();
+    loadData();
   }, [slug]);
 
-  const getCategories = (item: WordPressPortfolio) => {
-    try {
-      if (!item._embedded?.['wp:term']) return [];
-      const terms = item._embedded['wp:term'];
-      for (const termGroup of terms) {
-        if (Array.isArray(termGroup)) {
-          const categories = termGroup.filter(term => 
-            term.taxonomy === 'category' || 
-            term.taxonomy === 'portfolio_category'
-          );
-          if (categories.length > 0) return categories;
-        }
-      }
-      return [];
-    } catch {
-      return [];
-    }
+  const getCategories = (item: WordPressPortfolio, allCategories: Array<{ id: number; name: string; slug: string; taxonomy: string; }>) => {
+    if (!item.portfolio_categories || item.portfolio_categories.length === 0) return [];
+    return item.portfolio_categories
+      .map(catId => allCategories.find(cat => cat.id === catId))
+      .filter((cat): cat is { id: number; name: string; slug: string; taxonomy: string; } => cat !== undefined);
   };
 
-  const getTags = (item: WordPressPortfolio) => {
-    try {
-      if (!item._embedded?.['wp:term']) return [];
-      const terms = item._embedded['wp:term'];
-      for (const termGroup of terms) {
-        if (Array.isArray(termGroup)) {
-          const tags = termGroup.filter(term => 
-            term.taxonomy === 'post_tag' || 
-            term.taxonomy === 'portfolio_tag'
-          );
-          if (tags.length > 0) return tags;
-        }
-      }
-      return [];
-    } catch {
-      return [];
-    }
+  const getTags = (item: WordPressPortfolio, allTags: Array<{ id: number; name: string; slug: string; }>) => {
+    if (!item.tags || item.tags.length === 0) return [];
+    return item.tags
+      .map(tagId => allTags.find(tag => tag.id === tagId))
+      .filter((tag): tag is { id: number; name: string; slug: string; } => tag !== undefined);
   };
 
   const getFeaturedImage = (item: WordPressPortfolio) => {
@@ -355,8 +248,8 @@ export default function PortfolioDetail({ slug }: PortfolioDetailProps) {
     );
   }
 
-  const categories = getCategories(portfolioItem);
-  const tags = getTags(portfolioItem);
+  const categories = getCategories(portfolioItem, allCategories);
+  const tags = getTags(portfolioItem, allTags);
   const featuredImage = getFeaturedImage(portfolioItem);
   const projectType = portfolioItem.acf?.project_type || categories[0]?.name || 'Projekt';
 
@@ -690,7 +583,7 @@ export default function PortfolioDetail({ slug }: PortfolioDetailProps) {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
               {relatedProjects.map((project) => {
                 const relatedImage = getFeaturedImage(project);
-                const relatedCategories = getCategories(project);
+                const relatedCategories = getCategories(project, allCategories);
                 const relatedType = project.acf?.project_type || relatedCategories[0]?.name || 'Projekt';
 
                 return (

@@ -6,59 +6,23 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Calendar, User, ArrowRight, ExternalLink } from 'lucide-react';
 
-interface WordPressPost {
-  id: number;
-  title: {
-    rendered: string;
-  };
-  excerpt: {
-    rendered: string;
-  };
-  content: {
-    rendered: string;
-  };
-  date: string;
-  link: string;
-  author: number;
-  categories: number[];
-  tags: number[];
-  featured_media: number;
-  _embedded?: {
-    author?: Array<{
-      name: string;
-      avatar_urls: {
-        '96': string;
-      };
-    }>;
-    'wp:featuredmedia'?: Array<{
-      source_url: string;
-      alt_text: string;
-    }>;
-    'wp:term'?: Array<Array<{
-      id: number;
-      name: string;
-      taxonomy: string;
-    }>>;
-  };
-}
+import { WordPressPost, fetchPosts, fetchCategories } from '@/lib/wordpress';
 
 export default function Blog() {
   const [posts, setPosts] = useState<WordPressPost[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [allCategories, setAllCategories] = useState<Array<{ id: number; name: string; slug: string; taxonomy: string; }>>([]);
 
   useEffect(() => {
-    const fetchPosts = async () => {
+    const loadPosts = async () => {
       try {
-        const response = await fetch(
-          'https://cockpit4me.de/wp-json/wp/v2/posts?_embed&per_page=6&orderby=date&order=desc'
-        );
-        
-        if (!response.ok) {
-          throw new Error('Failed to fetch posts');
-        }
-        
-        const data = await response.json();
+        // Fetch all categories first
+        const categoriesData = await fetchCategories();
+        setAllCategories(categoriesData);
+
+        // Fetch posts using the centralized function
+        const data = await fetchPosts({ per_page: 6, orderby: 'date', order: 'desc' });
         setPosts(data);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Ein Fehler ist aufgetreten');
@@ -67,7 +31,7 @@ export default function Blog() {
       }
     };
 
-    fetchPosts();
+    loadPosts();
   }, []);
 
   const formatDate = (dateString: string) => {
@@ -84,9 +48,11 @@ export default function Blog() {
     return tmp.textContent || tmp.innerText || '';
   };
 
-  const getCategories = (post: WordPressPost) => {
-    if (!post._embedded?.['wp:term']) return [];
-    return post._embedded['wp:term'][0]?.filter(term => term.taxonomy === 'category') || [];
+  const getCategories = (post: WordPressPost, allCategories: Array<{ id: number; name: string; slug: string; taxonomy: string; }>) => {
+    if (!post.categories || post.categories.length === 0) return [];
+    return post.categories
+      .map(catId => allCategories.find(cat => cat.id === catId))
+      .filter((cat): cat is { id: number; name: string; slug: string; taxonomy: string; } => cat !== undefined);
   };
 
   const getFeaturedImage = (post: WordPressPost) => {
@@ -154,6 +120,10 @@ export default function Blog() {
 
   return (
     <section id="blog" className="py-20 sm:py-32 bg-white">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
+      />
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Header */}
         <div className="text-center mb-16">
@@ -172,7 +142,7 @@ export default function Blog() {
         {/* Blog Posts Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 mb-16">
           {posts.map((post) => {
-            const categories = getCategories(post);
+            const categories = getCategories(post, allCategories);
             const featuredImage = getFeaturedImage(post);
             const author = getAuthor(post);
 

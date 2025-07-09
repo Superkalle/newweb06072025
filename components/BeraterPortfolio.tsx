@@ -8,64 +8,7 @@ import { ExternalLink, Calendar, ArrowRight, User, Mail, Phone, Linkedin, MapPin
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
-interface WordPressBerater {
-  id: number;
-  title: {
-    rendered: string;
-  };
-  excerpt: {
-    rendered: string;
-  };
-  content: {
-    rendered: string;
-  };
-  date: string;
-  link: string;
-  featured_media: number;
-  categories: number[];
-  type?: string;
-  acf?: {
-    berater_position?: string;
-    berater_email?: string;
-    berater_phone?: string;
-    berater_linkedin?: string;
-    berater_location?: string;
-    berater_specialties?: string;
-    berater_experience?: string;
-    berater_education?: string;
-    berater_certifications?: string;
-    berater_languages?: string;
-    berater_bio?: string;
-    berater_projects?: string;
-    berater_availability?: string;
-  };
-  _embedded?: {
-    'wp:featuredmedia'?: Array<{
-      source_url: string;
-      alt_text: string;
-      media_details?: {
-        sizes?: {
-          medium?: { source_url: string; };
-          large?: { source_url: string; };
-          full?: { source_url: string; };
-        };
-      };
-    }>;
-    'wp:term'?: Array<Array<{
-      id: number;
-      name: string;
-      taxonomy: string;
-      slug: string;
-    }>>;
-  };
-}
-
-interface Category {
-  id: number;
-  name: string;
-  slug: string;
-  count: number;
-}
+import { WordPressBerater, fetchBerater, fetchCategories, fetchTags } from '@/lib/wordpress';
 
 export default function BeraterPortfolio() {
   const [beraterTeam, setBeraterTeam] = useState<WordPressBerater[]>([]);
@@ -73,174 +16,47 @@ export default function BeraterPortfolio() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [debugInfo, setDebugInfo] = useState<string>('');
-  const [foundCategories, setFoundCategories] = useState<Category[]>([]);
+  const [allCategories, setAllCategories] = useState<Array<{ id: number; name: string; slug: string; taxonomy: string; }>>([]);
+  const [allTags, setAllTags] = useState<Array<{ id: number; name: string; slug: string; }>>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
 
-  // Spezifische Berater-Namen die gesucht werden sollen
-  const targetBeraterNames = ['marcus kaliga', 'jörg wachsmuth', 'manuel jork', 'stefan wolf'];
+  const schema = {
+    "@context": "https://schema.org",
+    "@type": "CollectionPage",
+    "name": "Unsere Berater",
+    "description": "Lernen Sie unser erfahrenes Team von Strategieberatern und Leadership-Experten kennen.",
+    "mainEntity": {
+      "@type": "ItemList",
+      "itemListElement": filteredBeraters.map((berater, index) => ({
+        "@type": "Person",
+        "position": index + 1,
+        "name": stripHtml(berater.title.rendered),
+        "url": berater.link,
+        "image": getFeaturedImage(berater) || undefined,
+        "jobTitle": berater.acf?.berater_position || undefined,
+        "email": berater.acf?.berater_email || undefined,
+        "telephone": berater.acf?.berater_phone || undefined,
+        "address": berater.acf?.berater_location ? {
+          "@type": "PostalAddress",
+          "addressLocality": berater.acf.berater_location
+        } : undefined,
+        "sameAs": berater.acf?.berater_linkedin ? [berater.acf.berater_linkedin] : undefined,
+        "description": berater.acf?.berater_bio || stripHtml(berater.excerpt.rendered) || undefined,
+        "knowsAbout": berater.acf?.berater_specialties?.split(',').map(s => s.trim()) || undefined,
+        "alumniOf": berater.acf?.berater_education ? {
+          "@type": "EducationalOrganization",
+          "name": berater.acf.berater_education
+        } : undefined,
+      }))
+    }
+  };
 
   useEffect(() => {
-    const fetchBeraterTeam = async () => {
+    const loadBeraterData = async () => {
       setLoading(true);
-      
-      try {
-        console.log('🔍 Starte Berater-Suche nach spezifischen Namen...');
-        setDebugInfo('Suche nach Berater-Kategorien und spezifischen Namen...');
-        
-        // Schritt 1: Alle Kategorien laden
-        const categoriesResponse = await fetch('https://cockpit4me.de/wp-json/wp/v2/categories?per_page=100', {
-          headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json',
-          },
-          mode: 'cors',
-          cache: 'no-cache'
-        });
-        
-        if (!categoriesResponse.ok) {
-          throw new Error(`Kategorien-Abruf fehlgeschlagen: ${categoriesResponse.status}`);
-        }
-        
-        const allCategories: Category[] = await categoriesResponse.json();
-        console.log('📋 Alle Kategorien:', allCategories.map(cat => `"${cat.name}" (${cat.slug}, ${cat.count} Posts)`));
-        
-        // Finde alle Berater-relevanten Kategorien
-        const beraterCategories = allCategories.filter(cat => 
-          cat.name.toLowerCase().includes('berater') ||
-          cat.slug.includes('berater') ||
-          cat.name.toLowerCase().includes('führung') ||
-          cat.name.toLowerCase().includes('transformation') ||
-          cat.name.toLowerCase().includes('team') ||
-          cat.name.toLowerCase().includes('consultant') ||
-          cat.slug === 'berater'
-        );
-        
-        console.log('🎯 Berater-relevante Kategorien gefunden:', beraterCategories);
-        setFoundCategories(beraterCategories);
-        setDebugInfo(`${beraterCategories.length} Berater-Kategorien gefunden: ${beraterCategories.map(c => c.name).join(', ')}`);
-        
-        // Schritt 2: Suche nach spezifischen Berater-Namen
-        let allBeraterPosts: WordPressBerater[] = [];
-        
-        // Suche nach jedem Berater-Namen einzeln
-        for (const beraterName of targetBeraterNames) {
-          try {
-            console.log(`🔍 Suche nach "${beraterName}"...`);
-            
-            const searchResponse = await fetch(`https://cockpit4me.de/wp-json/wp/v2/posts?_embed&per_page=50&search=${encodeURIComponent(beraterName)}&orderby=relevance&order=desc`, {
-              headers: {
-                'Accept': 'application/json',
-                'Content-Type': 'application/json',
-              },
-              mode: 'cors',
-              cache: 'no-cache'
-            });
-
-            if (searchResponse.ok) {
-              const posts = await searchResponse.json();
-              console.log(`✅ ${posts.length} Posts für "${beraterName}" gefunden`);
-              
-              if (Array.isArray(posts) && posts.length > 0) {
-                // Filtere Posts die den Namen im Titel enthalten
-                const relevantPosts = posts.filter((post: WordPressBerater) => 
-                  post.title.rendered.toLowerCase().includes(beraterName.toLowerCase()) ||
-                  post.content.rendered.toLowerCase().includes(beraterName.toLowerCase())
-                );
-                
-                if (relevantPosts.length > 0) {
-                  console.log(`🎯 ${relevantPosts.length} relevante Posts für "${beraterName}" gefunden`);
-                  allBeraterPosts = [...allBeraterPosts, ...relevantPosts];
-                }
-              }
-            } else {
-              console.log(`⚠️ Suche nach "${beraterName}" fehlgeschlagen: ${searchResponse.status}`);
-            }
-          } catch (nameError) {
-            console.log(`❌ Fehler bei Suche nach "${beraterName}":`, nameError);
-            continue;
-          }
-        }
-        
-        // Schritt 3: Falls keine spezifischen Namen gefunden, suche in Berater-Kategorien
-        if (allBeraterPosts.length === 0 && beraterCategories.length > 0) {
-          console.log('🔄 Fallback: Lade Posts aus Berater-Kategorien...');
-          
-          for (const category of beraterCategories) {
-            try {
-              console.log(`📦 Lade Posts aus Kategorie "${category.name}" (ID: ${category.id})...`);
-              
-              const postsResponse = await fetch(`https://cockpit4me.de/wp-json/wp/v2/posts?_embed&per_page=50&categories=${category.id}&orderby=date&order=desc`, {
-                headers: {
-                  'Accept': 'application/json',
-                  'Content-Type': 'application/json',
-                },
-                mode: 'cors',
-                cache: 'no-cache'
-              });
-
-              if (postsResponse.ok) {
-                const posts = await postsResponse.json();
-                console.log(`✅ ${posts.length} Posts aus "${category.name}" geladen`);
-                
-                if (Array.isArray(posts) && posts.length > 0) {
-                  // Filtere Posts die Berater-Namen enthalten
-                  const beraterPosts = posts.filter((post: WordPressBerater) => {
-                    const titleLower = post.title.rendered.toLowerCase();
-                    const contentLower = post.content.rendered.toLowerCase();
-                    
-                    return targetBeraterNames.some(name => 
-                      titleLower.includes(name.toLowerCase()) ||
-                      contentLower.includes(name.toLowerCase())
-                    );
-                  });
-                  
-                  if (beraterPosts.length > 0) {
-                    console.log(`🎯 ${beraterPosts.length} Berater-Posts in "${category.name}" gefunden`);
-                    allBeraterPosts = [...allBeraterPosts, ...beraterPosts];
-                  } else {
-                    // Füge alle Posts aus der Kategorie hinzu als Fallback
-                    allBeraterPosts = [...allBeraterPosts, ...posts.slice(0, 3)];
-                  }
-                }
-              } else {
-                console.log(`⚠️ Kategorie "${category.name}" konnte nicht geladen werden: ${postsResponse.status}`);
-              }
-            } catch (categoryError) {
-              console.log(`❌ Fehler bei Kategorie "${category.name}":`, categoryError);
-              continue;
-            }
-          }
-        }
-        
-        // Entferne Duplikate basierend auf Post-ID
-        const uniquePosts = allBeraterPosts.filter((post, index, self) => 
-          index === self.findIndex(p => p.id === post.id)
-        );
-        
-        console.log(`🎉 Insgesamt ${uniquePosts.length} einzigartige Berater-Posts gefunden`);
-        setDebugInfo(prev => prev + ` | ${uniquePosts.length} Posts geladen`);
-        
-        if (uniquePosts.length > 0) {
-          setBeraterTeam(uniquePosts);
-          setFilteredBeraters(uniquePosts);
-          setError(null);
-        } else {
-          throw new Error('Keine Berater-Posts mit den angegebenen Namen gefunden');
-        }
-
-      } catch (err) {
-        console.error('❌ Berater-Team-Laden fehlgeschlagen:', err);
-        setError(err instanceof Error ? err.message : 'Fehler beim Laden der Berater-Team-Daten');
-        setBeraterTeam([]);
-        setFilteredBeraters([]);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchBeraterTeam();
-  }, []);
+      setError(null);
+      setDebugInfo('');
 
   // Filter-Effekt
   useEffect(() => {
@@ -256,48 +72,26 @@ export default function BeraterPortfolio() {
 
     if (selectedCategory !== 'all') {
       filtered = filtered.filter(berater => {
-        const categories = getCategories(berater);
-        return categories.some(cat => cat.name === selectedCategory);
+        const categories = getCategories(berater, allCategories);
+        return categories.some(cat => cat.slug === selectedCategory);
       });
     }
 
     setFilteredBeraters(filtered);
   }, [beraterTeam, searchTerm, selectedCategory]);
 
-  const getCategories = (item: WordPressBerater) => {
-    try {
-      if (!item._embedded?.['wp:term']) return [];
-      const terms = item._embedded['wp:term'];
-      for (const termGroup of terms) {
-        if (Array.isArray(termGroup)) {
-          const categories = termGroup.filter(term => 
-            term.taxonomy === 'category'
-          );
-          if (categories.length > 0) return categories;
-        }
-      }
-      return [];
-    } catch {
-      return [];
-    }
+  const getCategories = (item: WordPressBerater, allCategories: Array<{ id: number; name: string; slug: string; taxonomy: string; }>) => {
+    if (!item.portfolio_categories || item.portfolio_categories.length === 0) return [];
+    return item.portfolio_categories
+      .map(catId => allCategories.find(cat => cat.id === catId))
+      .filter((cat): cat is { id: number; name: string; slug: string; taxonomy: string; } => cat !== undefined);
   };
 
-  const getTags = (item: WordPressBerater) => {
-    try {
-      if (!item._embedded?.['wp:term']) return [];
-      const terms = item._embedded['wp:term'];
-      for (const termGroup of terms) {
-        if (Array.isArray(termGroup)) {
-          const tags = termGroup.filter(term => 
-            term.taxonomy === 'post_tag'
-          );
-          if (tags.length > 0) return tags;
-        }
-      }
-      return [];
-    } catch {
-      return [];
-    }
+  const getTags = (item: WordPressBerater, allTags: Array<{ id: number; name: string; slug: string; }>) => {
+    if (!item.tags || item.tags.length === 0) return [];
+    return item.tags
+      .map(tagId => allTags.find(tag => tag.id === tagId))
+      .filter((tag): tag is { id: number; name: string; slug: string; } => tag !== undefined);
   };
 
   const getFeaturedImage = (item: WordPressBerater) => {
@@ -362,9 +156,7 @@ export default function BeraterPortfolio() {
   };
 
   // Extrahiere verfügbare Kategorien für Filter
-  const availableCategories = Array.from(new Set(
-    beraterTeam.flatMap(berater => getCategories(berater).map(cat => cat.name))
-  ));
+  const availableCategoriesForFilter = allCategories.filter(cat => cat.taxonomy === 'portfolio_category');
 
   // Loading State
   if (loading) {
@@ -582,7 +374,7 @@ export default function BeraterPortfolio() {
                 className="pl-10"
               />
             </div>
-            {availableCategories.length > 0 && (
+            {availableCategoriesForFilter.length > 0 && (
               <div className="flex items-center gap-2">
                 <Filter className="h-4 w-4 text-gray-400" />
                 <Select value={selectedCategory} onValueChange={setSelectedCategory}>
@@ -591,9 +383,9 @@ export default function BeraterPortfolio() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">Alle Kategorien</SelectItem>
-                    {availableCategories.map((category) => (
-                      <SelectItem key={category} value={category}>
-                        {category}
+                    {availableCategoriesForFilter.map((category) => (
+                      <SelectItem key={category.slug} value={category.slug}>
+                        {category.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -606,8 +398,8 @@ export default function BeraterPortfolio() {
         {/* Berater Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 mb-16">
           {filteredBeraters.map((berater) => {
-            const tags = getTags(berater);
-            const categories = getCategories(berater);
+            const tags = getTags(berater, allTags);
+            const categories = getCategories(berater, allCategories);
             const featuredImage = getFeaturedImage(berater);
             const position = berater.acf?.berater_position || 'Senior Berater';
             const specialties = berater.acf?.berater_specialties?.split(',').map(s => s.trim()) || [];

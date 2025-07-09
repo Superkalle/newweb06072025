@@ -2,6 +2,15 @@ import { notFound } from 'next/navigation';
 import Navigation from '@/components/Navigation';
 import Footer from '@/components/Footer';
 import PortfolioDetail from '@/components/PortfolioDetail';
+import { fetchPortfolio } from '@/lib/wordpress';
+
+export async function generateStaticParams() {
+  const portfolioItems = await fetchPortfolio();
+ 
+  return portfolioItems.map((item) => ({
+    slug: item.slug,
+  }));
+}
 
 interface PortfolioPageProps {
   params: {

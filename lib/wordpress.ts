@@ -52,8 +52,12 @@ export interface WordPressPortfolio {
   };
   date: string;
   link: string;
+  slug: string;
   featured_media: number;
   type: string;
+  portfolio_categories: number[]; // Hinzugefügt für Kategorien-IDs
+  tags: number[]; // Hinzugefügt für Tags-IDs
+
   acf?: {
     project_url?: string;
     client_name?: string;
@@ -126,7 +130,99 @@ export interface WordPressCustomPost {
   };
 }
 
-// Utility Functions
+export interface WordPressService {
+  id: number;
+  title: {
+    rendered: string;
+  };
+  content: {
+    rendered: string;
+  };
+  link: string;
+  featured_media: number;
+  acf?: {
+    service_price?: string;
+    service_duration?: string;
+    service_features?: string;
+    service_icon?: string;
+  };
+  _embedded?: {
+    'wp:featuredmedia'?: Array<{
+      source_url: string;
+      alt_text: string;
+    }>;
+  };
+}
+
+export interface WordPressBerater {
+  id: number;
+  title: {
+    rendered: string;
+  };
+  excerpt: {
+    rendered: string;
+  };
+  content: {
+    rendered: string;
+  };
+  date: string;
+  link: string;
+  slug: string;
+  featured_media: number;
+  categories: number[]; // Standard WP categories
+  portfolio_categories: number[]; // Custom portfolio categories
+  tags: number[]; // Standard WP tags
+  type?: string;
+  acf?: {
+    berater_position?: string;
+    berater_email?: string;
+    berater_phone?: string;
+    berater_linkedin?: string;
+    berater_location?: string;
+    berater_specialties?: string;
+    berater_experience?: string;
+    berater_education?: string;
+    berater_certifications?: string;
+    berater_languages?: string;
+    berater_bio?: string;
+    berater_projects?: string;
+    berater_availability?: string;
+  };
+  _embedded?: {
+    'wp:featuredmedia'?: Array<{
+      source_url: string;
+      alt_text: string;
+      media_details?: {
+        sizes?: {
+          medium?: { source_url: string; };
+          large?: { source_url: string; };
+          full?: { source_url: string; };
+        };
+      };
+    }>;
+    'wp:term'?: Array<Array<{
+      id: number;
+      name: string;
+      taxonomy: string;
+      slug: string;
+    }>>;
+  };
+}
+
+
+const createSearchParams = (params: Record<string, string | number | undefined>) => {
+  const searchParams = new URLSearchParams({
+    _embed: "true",
+  });
+
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined) {
+      searchParams.set(key, String(value));
+    }
+  }
+
+  return searchParams;
+};
 export const stripHtml = (html: string): string => {
   if (typeof window === 'undefined') {
     // Server-side: einfache Regex-basierte HTML-Entfernung
@@ -162,13 +258,7 @@ export const fetchPosts = async (params: {
   orderby?: string;
   order?: 'asc' | 'desc';
 } = {}): Promise<WordPressPost[]> => {
-  const searchParams = new URLSearchParams({
-    _embed: 'true',
-    per_page: '10',
-    orderby: 'date',
-    order: 'desc',
-    ...params
-  });
+  const searchParams = createSearchParams(params);
 
   try {
     const response = await fetch(`${WORDPRESS_API_URL}/posts?${searchParams}`, {
@@ -197,20 +287,14 @@ export const fetchPortfolio = async (params: {
   page?: number;
   orderby?: string;
   order?: 'asc' | 'desc';
+  search?: string;
+  portfolio_category?: string; // Hinzugefügt für Kategoriefilterung
 } = {}): Promise<WordPressPortfolio[]> => {
-  const searchParams = new URLSearchParams({
-    _embed: 'true',
-    per_page: '10',
-    orderby: 'date',
-    order: 'desc',
-    ...params
-  });
+  const searchParams = createSearchParams(params);
 
   // Versuche verschiedene Endpoints
   const endpoints = [
-    `${WORDPRESS_API_URL}/portfolio?${searchParams}`,
-    `${WORDPRESS_API_URL}/posts?${searchParams}&categories=portfolio`,
-    `${WORDPRESS_API_URL}/posts?${searchParams}&tags=portfolio`
+    `${WORDPRESS_API_URL}/avada_portfolio?${searchParams}`
   ];
 
   for (const endpoint of endpoints) {
@@ -226,17 +310,21 @@ export const fetchPortfolio = async (params: {
       if (response.ok) {
         const data = await response.json();
         if (Array.isArray(data) && data.length > 0) {
-          // Filtere nur Portfolio-Items
-          return data.filter((item: WordPressPortfolio) => 
-            item.type === 'portfolio' || 
-            item.acf?.project_url || 
-            item.acf?.client_name
-          );
+          // Map embedded terms to portfolio_categories
+          const mappedData: WordPressPortfolio[] = data.map((item: any) => ({
+            ...item,
+            portfolio_categories: item._embedded?.['wp:term']?.flat()
+              .filter((term: any) => term.taxonomy === 'portfolio_category')
+              .map((term: any) => term.id) || [],
+            tags: item._embedded?.['wp:term']?.flat()
+              .filter((term: any) => term.taxonomy === 'post_tag')
+              .map((term: any) => term.id) || [],
+          }));
+          return mappedData;
         }
       }
     } catch (error) {
-      console.log(`Portfolio endpoint ${endpoint} failed:`, error);
-      continue;
+      console.error(`Portfolio endpoint ${endpoint} failed:`, error);
     }
   }
 
@@ -250,13 +338,7 @@ export const fetchPages = async (params: {
   orderby?: string;
   order?: 'asc' | 'desc';
 } = {}): Promise<WordPressPage[]> => {
-  const searchParams = new URLSearchParams({
-    _embed: 'true',
-    per_page: '10',
-    orderby: 'menu_order',
-    order: 'asc',
-    ...params
-  });
+  const searchParams = createSearchParams(params);
 
   try {
     const response = await fetch(`${WORDPRESS_API_URL}/pages?${searchParams}`, {
@@ -288,13 +370,7 @@ export const fetchCustomPosts = async (
     order?: 'asc' | 'desc';
   } = {}
 ): Promise<WordPressCustomPost[]> => {
-  const searchParams = new URLSearchParams({
-    _embed: 'true',
-    per_page: '10',
-    orderby: 'date',
-    order: 'desc',
-    ...params
-  });
+  const searchParams = createSearchParams(params);
 
   try {
     const response = await fetch(`${WORDPRESS_API_URL}/${postType}?${searchParams}`, {
@@ -369,8 +445,8 @@ export const searchContent = async (
   total: number;
 }> => {
   const results = await Promise.allSettled([
-    fetchPosts({ search: query, per_page: '5' }),
-    fetchPortfolio({ search: query, per_page: '5' })
+    fetchPosts({ search: query, per_page: 5 }),
+    fetchPortfolio({ search: query, per_page: 5 })
   ]);
 
   const posts: WordPressPost[] = results[0].status === 'fulfilled' ? results[0].value : [];
@@ -435,6 +511,129 @@ export const fetchTags = async (): Promise<Array<{
   } catch (error) {
     console.error('Error fetching tags:', error);
     return [];
+  }
+};
+
+export const fetchServices = async (params: {
+  per_page?: number;
+  page?: number;
+  orderby?: string;
+  order?: 'asc' | 'desc';
+  search?: string;
+} = {}): Promise<WordPressService[]> => {
+  const searchParams = createSearchParams(params);
+
+  // Try fetching from 'services' custom post type first
+  try {
+    const response = await fetch(`${WORDPRESS_API_URL}/services?${searchParams}`, {
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+      },
+      signal: AbortSignal.timeout(10000)
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      if (Array.isArray(data) && data.length > 0) {
+        return data;
+      }
+    }
+  } catch (error) {
+    console.warn('Could not fetch from services CPT, trying posts category:', error);
+  }
+
+  // Fallback to fetching from 'posts' with 'services' category
+  try {
+    const response = await fetch(`${WORDPRESS_API_URL}/posts?categories=services&${searchParams}`, {
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+      },
+      signal: AbortSignal.timeout(10000)
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return Array.isArray(data) ? data : [];
+  } catch (error) {
+    console.error('Error fetching services from posts category:', error);
+    throw error;
+  }
+};
+
+export const fetchBerater = async (params: {
+  per_page?: number;
+  page?: number;
+  orderby?: string;
+  order?: 'asc' | 'desc';
+  search?: string;
+  portfolio_category?: string; // Filter by portfolio category
+} = {}): Promise<WordPressBerater[]> => {
+  const searchParams = createSearchParams(params);
+
+  // Try fetching from 'avada_portfolio' custom post type first, filtered by category
+  try {
+    const response = await fetch(`${WORDPRESS_API_URL}/avada_portfolio?${searchParams}`, {
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+      },
+      signal: AbortSignal.timeout(10000)
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      if (Array.isArray(data) && data.length > 0) {
+        // Map embedded terms to portfolio_categories and tags
+        const mappedData: WordPressBerater[] = data.map((item: any) => ({
+          ...item,
+          portfolio_categories: item._embedded?.['wp:term']?.flat()
+            .filter((term: any) => term.taxonomy === 'portfolio_category')
+            .map((term: any) => term.id) || [],
+          tags: item._embedded?.['wp:term']?.flat()
+            .filter((term: any) => term.taxonomy === 'post_tag')
+            .map((term: any) => term.id) || [],
+        }));
+        return mappedData;
+      }
+    }
+  } catch (error) {
+    console.warn('Could not fetch from avada_portfolio CPT, trying posts category:', error);
+  }
+
+  // Fallback to fetching from 'posts' with 'berater' category (assuming 'berater' is a category slug)
+  try {
+    const response = await fetch(`${WORDPRESS_API_URL}/posts?categories=berater&${searchParams}`, {
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+      },
+      signal: AbortSignal.timeout(10000)
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    // Map embedded terms to portfolio_categories and tags for fallback posts
+    const mappedData: WordPressBerater[] = data.map((item: any) => ({
+      ...item,
+      portfolio_categories: item._embedded?.['wp:term']?.flat()
+        .filter((term: any) => term.taxonomy === 'portfolio_category')
+        .map((term: any) => term.id) || [],
+      tags: item._embedded?.['wp:term']?.flat()
+        .filter((term: any) => term.taxonomy === 'post_tag')
+        .map((term: any) => term.id) || [],
+    }));
+    return mappedData;
+  } catch (error) {
+    console.error('Error fetching berater from posts category:', error);
+    throw error;
   }
 };
 

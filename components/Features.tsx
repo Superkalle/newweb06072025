@@ -47,8 +47,24 @@ const features = [
 ];
 
 export default function Features() {
+  const schema = {
+    "@context": "https://schema.org",
+    "@type": "ItemList",
+    "itemListElement": features.map((feature, index) => ({
+      "@type": "Service",
+      "position": index + 1,
+      "name": feature.title,
+      "description": feature.description,
+      "url": "https://cockpit4me.de/#features" // Consider linking to specific service pages if available
+    }))
+  };
+
   return (
     <section id="features" className="py-20 sm:py-32 bg-gray-50/50">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
+      />
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Header */}
         <div className="text-center mb-16">

@@ -7,165 +7,42 @@ import { Button } from '@/components/ui/button';
 import { ExternalLink, Calendar, Tag, ArrowRight, Briefcase, User, Clock, AlertCircle, Filter } from 'lucide-react';
 import Link from 'next/link';
 
-interface WordPressPortfolio {
-  id: number;
-  title: {
-    rendered: string;
-  };
-  excerpt: {
-    rendered: string;
-  };
-  content: {
-    rendered: string;
-  };
-  date: string;
-  link: string;
-  featured_media: number;
-  type?: string;
-  acf?: {
-    project_url?: string;
-    client_name?: string;
-    project_type?: string;
-    technologies?: string;
-    completion_date?: string;
-    project_description?: string;
-    project_status?: string;
-  };
-  _embedded?: {
-    'wp:featuredmedia'?: Array<{
-      source_url: string;
-      alt_text: string;
-      media_details?: {
-        sizes?: {
-          medium?: { source_url: string; };
-          large?: { source_url: string; };
-        };
-      };
-    }>;
-    'wp:term'?: Array<Array<{
-      id: number;
-      name: string;
-      taxonomy: string;
-      slug: string;
-    }>>;
-  };
-}
+import { WordPressPortfolio, fetchPortfolio, fetchCategories } from '@/lib/wordpress';
 
 export default function Portfolio() {
   const [portfolioItems, setPortfolioItems] = useState<WordPressPortfolio[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
-  const [availableCategories, setAvailableCategories] = useState<string[]>([]);
+  const [availableCategories, setAvailableCategories] = useState<Array<{ id: number; name: string; slug: string; taxonomy: string; }>>([]);
 
   useEffect(() => {
-    const fetchPortfolio = async () => {
+    const loadPortfolioData = async () => {
       setLoading(true);
+      setError(null);
 
       try {
-        // Erweiterte Liste von möglichen WordPress-Endpoints
-        const endpoints = [
-          // Custom Post Type Portfolio
-          'https://cockpit4me.de/wp-json/wp/v2/portfolio?_embed&per_page=12&orderby=date&order=desc',
-          'https://cockpit4me.de/wp-json/wp/v2/portfolio?_embed&per_page=12&orderby=menu_order&order=asc',
-          
-          // Posts mit Portfolio-Kategorie
-          'https://cockpit4me.de/wp-json/wp/v2/posts?_embed&per_page=12&categories=portfolio&orderby=date&order=desc',
-          
-          // Posts mit Portfolio-Tag
-          'https://cockpit4me.de/wp-json/wp/v2/posts?_embed&per_page=12&tags=portfolio&orderby=date&order=desc',
-          
-          // Suche nach Portfolio-Posts
-          'https://cockpit4me.de/wp-json/wp/v2/posts?_embed&per_page=12&search=portfolio&orderby=relevance&order=desc',
-          
-          // Alle Posts durchsuchen (als letzter Fallback)
-          'https://cockpit4me.de/wp-json/wp/v2/posts?_embed&per_page=12&orderby=date&order=desc'
-        ];
+        // Fetch categories first
+        const categoriesData = await fetchCategories();
+        const portfolioCategories = categoriesData.filter(cat => cat.taxonomy === 'portfolio_category');
+        setAvailableCategories([{ id: 0, name: 'Alle', slug: 'all', taxonomy: 'all' }, ...portfolioCategories]);
 
-        let portfolioData: WordPressPortfolio[] = [];
-        let success = false;
-        let lastError: string = '';
-
-        for (const endpoint of endpoints) {
-          try {
-            console.log(`Versuche Portfolio-Daten von: ${endpoint}`);
-            
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-            const response = await fetch(endpoint, {
-              signal: controller.signal,
-              headers: {
-                'Accept': 'application/json',
-                'Content-Type': 'application/json',
-                'User-Agent': 'cockpit4me-frontend/1.0'
-              },
-              mode: 'cors',
-              cache: 'no-cache'
-            });
-
-            clearTimeout(timeoutId);
-
-            if (response.ok) {
-              const data = await response.json();
-
-              if (Array.isArray(data) && data.length > 0) {
-                // Filtere Portfolio-relevante Posts
-                const filteredData = data.filter((item: WordPressPortfolio) => {
-                  const isPortfolioType = item.type === 'portfolio';
-                  const hasPortfolioACF = item.acf?.project_url || item.acf?.client_name || item.acf?.project_type;
-                  const hasPortfolioContent = item.title.rendered.toLowerCase().includes('projekt') ||
-                                            item.excerpt.rendered.toLowerCase().includes('projekt') ||
-                                            item.excerpt.rendered.toLowerCase().includes('client') ||
-                                            item.excerpt.rendered.toLowerCase().includes('kunde');
-                  
-                  return isPortfolioType || hasPortfolioACF || hasPortfolioContent;
-                });
-
-                if (filteredData.length > 0) {
-                  portfolioData = filteredData;
-                  success = true;
-                  console.log(`✅ Portfolio-Daten erfolgreich geladen: ${filteredData.length} Projekte`);
-                  break;
-                } else if (data.length > 0) {
-                  // Verwende alle Posts als Fallback, aber markiere sie entsprechend
-                  portfolioData = data.slice(0, 6).map((item: any) => ({
-                    ...item,
-                    acf: {
-                      ...item.acf,
-                      project_type: 'Projekt',
-                      client_name: 'cockpit4me'
-                    }
-                  }));
-                  success = true;
-                  console.log(`✅ Allgemeine Posts als Portfolio verwendet: ${portfolioData.length} Einträge`);
-                  break;
-                }
-              }
-            } else {
-              lastError = `HTTP ${response.status}: ${response.statusText}`;
-            }
-          } catch (endpointError) {
-            lastError = endpointError instanceof Error ? endpointError.message : 'Unbekannter Fehler';
-            continue;
+        // Determine parameters for fetching portfolio items
+        const params: { portfolio_category?: string; per_page?: number; } = {
+          per_page: 12,
+        };
+        if (selectedCategory !== 'all') {
+          // Find the ID of the selected category
+          const categoryId = portfolioCategories.find(cat => cat.slug === selectedCategory)?.id;
+          if (categoryId) {
+            params.portfolio_category = String(categoryId); // Pass ID as string
           }
         }
 
-        if (success && portfolioData.length > 0) {
-          setPortfolioItems(portfolioData);
-          
-          // Extrahiere verfügbare Kategorien
-          const categories = new Set<string>();
-          portfolioData.forEach(item => {
-            const itemCategories = getCategories(item);
-            itemCategories.forEach(cat => categories.add(cat.name));
-          });
-          setAvailableCategories(['all', ...Array.from(categories)]);
-          
-          setError(null);
-        } else {
-          throw new Error(`Keine Portfolio-Daten gefunden. Letzter Fehler: ${lastError}`);
-        }
+        // Fetch portfolio items using the centralized function
+        const data = await fetchPortfolio(params);
+        setPortfolioItems(data);
+        console.log(`✅ Portfolio-Daten erfolgreich geladen: ${data.length} Projekte`);
 
       } catch (err) {
         console.error('❌ Portfolio-Laden fehlgeschlagen:', err);
@@ -176,26 +53,14 @@ export default function Portfolio() {
       }
     };
 
-    fetchPortfolio();
-  }, []);
+    loadPortfolioData();
+  }, [selectedCategory]);
 
-  const getCategories = (item: WordPressPortfolio) => {
-    try {
-      if (!item._embedded?.['wp:term']) return [];
-      const terms = item._embedded['wp:term'];
-      for (const termGroup of terms) {
-        if (Array.isArray(termGroup)) {
-          const categories = termGroup.filter(term => 
-            term.taxonomy === 'category' || 
-            term.taxonomy === 'portfolio_category'
-          );
-          if (categories.length > 0) return categories;
-        }
-      }
-      return [];
-    } catch {
-      return [];
-    }
+  const getCategories = (item: WordPressPortfolio, allCategories: Array<{ id: number; name: string; slug: string; taxonomy: string; }>) => {
+    if (!item.portfolio_categories || item.portfolio_categories.length === 0) return [];
+    return item.portfolio_categories
+      .map(catId => allCategories.find(cat => cat.id === catId))
+      .filter((cat): cat is { id: number; name: string; slug: string; taxonomy: string; } => cat !== undefined);
   };
 
   const getTags = (item: WordPressPortfolio) => {
@@ -285,14 +150,14 @@ export default function Portfolio() {
   const filteredItems = selectedCategory === 'all' 
     ? portfolioItems 
     : portfolioItems.filter(item => 
-        getCategories(item).some(cat => cat.name === selectedCategory)
+        getCategories(item, availableCategories).some(cat => cat.slug === selectedCategory)
       );
 
   // Prüfe ob Berater-Kategorie vorhanden ist
   const hasBeraterCategory = availableCategories.some(cat => 
-    cat.toLowerCase().includes('berater') || 
-    cat.toLowerCase().includes('beratung') || 
-    cat.toLowerCase().includes('consulting')
+    cat.name.toLowerCase().includes('berater') || 
+    cat.name.toLowerCase().includes('beratung') || 
+    cat.name.toLowerCase().includes('consulting')
   );
 
   // Loading State
@@ -419,16 +284,16 @@ export default function Portfolio() {
               <div className="flex flex-wrap justify-center gap-2">
                 {availableCategories.map((category) => (
                   <Button
-                    key={category}
-                    variant={selectedCategory === category ? "default" : "outline"}
+                    key={category.slug}
+                    variant={selectedCategory === category.slug ? "default" : "outline"}
                     size="sm"
-                    onClick={() => setSelectedCategory(category)}
-                    className={selectedCategory === category 
+                    onClick={() => setSelectedCategory(category.slug)}
+                    className={selectedCategory === category.slug 
                       ? "bg-cockpit-turquoise text-white" 
                       : "border-cockpit-turquoise text-cockpit-turquoise hover:bg-cockpit-turquoise hover:text-white"
                     }
                   >
-                    {category === 'all' ? 'Alle' : category}
+                    {category.name}
                   </Button>
                 ))}
               </div>
@@ -465,7 +330,7 @@ export default function Portfolio() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 mb-16">
           {filteredItems.map((item) => {
             const tags = getTags(item);
-            const categories = getCategories(item);
+            const categories = getCategories(item, availableCategories);
             const featuredImage = getFeaturedImage(item);
             const projectType = item.acf?.project_type || categories[0]?.name || 'Projekt';
 
@@ -605,27 +470,7 @@ export default function Portfolio() {
                       </Link>
                     </Button>
 
-                    {/* Project URL */}
-                    {item.acf?.project_url && (
-                      <Button 
-                        asChild
-                        size="sm"
-                        variant="outline"
-                        className="border-cockpit-turquoise text-cockpit-turquoise hover:bg-cockpit-turquoise hover:text-white"
-                      >
-                        <a 
-                          href={item.acf.project_url} 
-                          target="_blank" 
-                          rel="noopener noreferrer"
-                          className="flex items-center space-x-1"
-                        >
-                          <ExternalLink className="w-3 h-3" />
-                          <span>Live</span>
-                        </a>
-                      </Button>
-                    )}
-                  </div>
-                </CardContent>
+                    </CardContent>
               </Card>
             );
           })}

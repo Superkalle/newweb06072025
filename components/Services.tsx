@@ -6,32 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ArrowRight, ExternalLink } from 'lucide-react';
 
-interface WordPressService {
-  id: number;
-  title: {
-    rendered: string;
-  };
-  excerpt: {
-    rendered: string;
-  };
-  content: {
-    rendered: string;
-  };
-  link: string;
-  featured_media: number;
-  acf?: {
-    service_price?: string;
-    service_duration?: string;
-    service_features?: string;
-    service_icon?: string;
-  };
-  _embedded?: {
-    'wp:featuredmedia'?: Array<{
-      source_url: string;
-      alt_text: string;
-    }>;
-  };
-}
+import { WordPressService, fetchServices } from '@/lib/wordpress';
 
 export default function Services() {
   const [services, setServices] = useState<WordPressService[]>([]);
@@ -39,24 +14,10 @@ export default function Services() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const fetchServices = async () => {
+    const loadServices = async () => {
       try {
-        // Versuche Services Custom Post Type
-        let response = await fetch(
-          'https://cockpit4me.de/wp-json/wp/v2/services?_embed&per_page=6&orderby=menu_order&order=asc'
-        );
-        
-        // Falls Services CPT nicht existiert, verwende Posts mit Services-Kategorie
-        if (!response.ok) {
-          response = await fetch(
-            'https://cockpit4me.de/wp-json/wp/v2/posts?_embed&per_page=6&categories=services&orderby=date&order=desc'
-          );
-        }
-        
-        if (response.ok) {
-          const data = await response.json();
-          setServices(data);
-        }
+        const data = await fetchServices({ per_page: 6, orderby: 'menu_order', order: 'asc' });
+        setServices(data);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Ein Fehler ist aufgetreten');
       } finally {
@@ -64,7 +25,7 @@ export default function Services() {
       }
     };
 
-    fetchServices();
+    loadServices();
   }, []);
 
   const stripHtml = (html: string) => {
@@ -87,6 +48,10 @@ export default function Services() {
 
   return (
     <section id="services" className="py-20 sm:py-32 bg-white">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
+      />
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Header */}
         <div className="text-center mb-16">
